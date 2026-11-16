@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/getsops/sops/v3/keys"
 	"github.com/stretchr/testify/assert"
 )
+
+// testConfigPath is the path of the config file used by the rule-matching
+// tests. It is assembled from the platform separator so that the fixtures do
+// not hardcode a Unix layout.
+func testConfigPath(parts ...string) string {
+	return filepath.Join(append([]string{"conf", "path"}, parts...)...)
+}
 
 type mockFS struct {
 	stat func(string) (os.FileInfo, error)
@@ -542,7 +550,7 @@ func ids(keys []keys.MasterKey) []string {
 }
 
 func TestLoadConfigFileWithMerge(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithMergeType, t), "/conf/path", "whatever", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithMergeType, t), testConfigPath(), "whatever", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(conf.KeyGroups))
 	assert.Equal(t, []string{
@@ -578,12 +586,12 @@ func TestLoadConfigFileWithMerge(t *testing.T) {
 }
 
 func TestLoadConfigFileWithNoMatchingRules(t *testing.T) {
-	_, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithNoMatchingRules, t), "/conf/path", "foobar2000", nil)
+	_, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithNoMatchingRules, t), testConfigPath(), "foobar2000", nil)
 	assert.NotNil(t, err)
 }
 
 func TestLoadConfigFileWithInvalidComplicatedRegexp(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithInvalidComplicatedRegexp, t), "/conf/path", "stage/prod/api.yml", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithInvalidComplicatedRegexp, t), testConfigPath(), "stage/prod/api.yml", nil)
 	assert.Equal(t, "can not compile regexp: error parsing regexp: invalid escape sequence: `\\K`", err.Error())
 	assert.Nil(t, conf)
 }
@@ -594,58 +602,58 @@ func TestLoadConfigFileWithComplicatedRegexp(t *testing.T) {
 		"stage/dev/feature-foo.yml": "dev-feature",
 		"stage/dev/api.yml":         "dev",
 	} {
-		conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithComplicatedRegexp, t), "/conf/path", filePath, nil)
+		conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithComplicatedRegexp, t), testConfigPath(), filePath, nil)
 		assert.Nil(t, err)
 		assert.Equal(t, k, conf.KeyGroups[0][0].ToString())
 	}
 }
 
 func TestLoadEmptyConfigFile(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleEmptyConfig, t), "/conf/path", "foobar2000", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleEmptyConfig, t), testConfigPath(), "foobar2000", nil)
 	assert.Nil(t, conf)
 	assert.Nil(t, err)
 }
 
 func TestLoadConfigFileWithEmptyCreationRules(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEmptyCreationRules, t), "/conf/path", "foobar2000", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEmptyCreationRules, t), testConfigPath(), "foobar2000", nil)
 	assert.Nil(t, conf)
 	assert.Nil(t, err)
 }
 
 func TestLoadConfigFileWithOnlyDestinationRules(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithOnlyDestinationRules, t), "/conf/path", "foobar2000", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithOnlyDestinationRules, t), testConfigPath(), "foobar2000", nil)
 	assert.Nil(t, conf)
 	assert.Nil(t, err)
 }
 
 func TestKeyGroupsForFile(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfig, t), "/conf/path", "foobar2000", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfig, t), testConfigPath(), "foobar2000", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "2", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "1", conf.KeyGroups[0][1].ToString())
-	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfig, t), "/conf/path", "whatever", nil)
+	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfig, t), testConfigPath(), "whatever", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "bar", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "foo", conf.KeyGroups[0][1].ToString())
 }
 
 func TestKeyGroupsForFileWithPath(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithPath, t), "/conf/path", "foo/bar2000", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithPath, t), testConfigPath(), "foo/bar2000", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "2", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "1", conf.KeyGroups[0][1].ToString())
-	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfigWithPath, t), "/conf/path", "somefilename.yml", nil)
+	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfigWithPath, t), testConfigPath(), "somefilename.yml", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "baggins", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "bilbo", conf.KeyGroups[0][1].ToString())
-	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfig, t), "/conf/path", "whatever", nil)
+	conf, err = parseCreationRuleForFile(parseConfigFile(sampleConfig, t), testConfigPath(), "whatever", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "bar", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "foo", conf.KeyGroups[0][1].ToString())
 }
 
 func TestKeyGroupsForFileWithGroups(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithGroups, t), "/conf/path", "whatever", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithGroups, t), testConfigPath(), "whatever", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "bar", conf.KeyGroups[0][0].ToString())
 	assert.Equal(t, "foo||bar", conf.KeyGroups[0][1].ToString())
@@ -658,57 +666,62 @@ func TestKeyGroupsForFileWithGroups(t *testing.T) {
 }
 
 func TestLoadConfigFileWithUnencryptedSuffix(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithSuffixParameters, t), "/conf/path", "foobar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithSuffixParameters, t), testConfigPath(), "foobar", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "_unencrypted", conf.UnencryptedSuffix)
 }
 
 func TestLoadConfigFileWithEncryptedSuffix(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithSuffixParameters, t), "/conf/path", "barfoo", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithSuffixParameters, t), testConfigPath(), "barfoo", nil)
 	assert.Nil(t, err)
 	assert.Equal(t, "_enc", conf.EncryptedSuffix)
 }
 
 func TestLoadConfigFileWithUnencryptedRegex(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithUnencryptedRegexParameters, t), "/conf/path", "barbar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithUnencryptedRegexParameters, t), testConfigPath(), "barbar", nil)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "^dec:", conf.UnencryptedRegex)
 }
 
 func TestLoadConfigFileWithEncryptedRegex(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEncryptedRegexParameters, t), "/conf/path", "barbar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEncryptedRegexParameters, t), testConfigPath(), "barbar", nil)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "^enc:", conf.EncryptedRegex)
 }
 
 func TestLoadConfigFileWithMACOnlyEncrypted(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithMACOnlyEncrypted, t), "/conf/path", "barbar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithMACOnlyEncrypted, t), testConfigPath(), "barbar", nil)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, true, conf.MACOnlyEncrypted)
 }
 
 func TestLoadConfigFileWithUnencryptedCommentRegex(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithUnencryptedCommentRegexParameters, t), "/conf/path", "barbar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithUnencryptedCommentRegexParameters, t), testConfigPath(), "barbar", nil)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "sops:dec", conf.UnencryptedCommentRegex)
 }
 
 func TestLoadConfigFileWithEncryptedCommentRegex(t *testing.T) {
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEncryptedCommentRegexParameters, t), "/conf/path", "barbar", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithEncryptedCommentRegexParameters, t), testConfigPath(), "barbar", nil)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "sops:enc", conf.EncryptedCommentRegex)
 }
 
 func TestLoadConfigFileWithInvalidParameters(t *testing.T) {
-	_, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithInvalidParameters, t), "/conf/path", "foobar", nil)
+	_, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithInvalidParameters, t), testConfigPath(), "foobar", nil)
 	assert.NotNil(t, err)
 }
 
 func TestLoadConfigFileWithAmbiguousPath(t *testing.T) {
 	config := parseConfigFile(sampleConfigWithAmbiguousPath, t)
-	_, err := parseCreationRuleForFile(config, "/foo/config", "/foo/foo/bar", nil)
+	// Absolute, platform-specific paths: a rule that is meant to cover "foo/*"
+	// must not match the sibling directory "fuu/*", and the config directory
+	// itself must not leak into the matched path.
+	base := t.TempDir()
+	configPath := filepath.Join(base, ".sops.yaml")
+	_, err := parseCreationRuleForFile(config, configPath, filepath.Join(base, "foo", "bar"), nil)
 	assert.Nil(t, err)
-	_, err = parseCreationRuleForFile(config, "/foo/config", "/foo/fuu/bar", nil)
+	_, err = parseCreationRuleForFile(config, configPath, filepath.Join(base, "fuu", "bar"), nil)
 	assert.NotNil(t, err)
 }
 
@@ -747,7 +760,7 @@ creation_rules:
     hc_vault_transit_uri:
       - "https://vault.example.com:8200/v1/transit/keys/key1"
 `)
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithNativeKeyLists, t), "/conf/path", "native_list_test", nil)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithNativeKeyLists, t), testConfigPath(), "native_list_test", nil)
 	assert.Nil(t, err)
 	if conf == nil {
 		t.Fatal("Expected configuration but got nil")
@@ -909,7 +922,7 @@ creation_rules:
 		"AppName": &appName,
 	}
 
-	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithFlatKMS, t), "/conf/path", "secrets.yaml", kmsEncryptionContext)
+	conf, err := parseCreationRuleForFile(parseConfigFile(sampleConfigWithFlatKMS, t), testConfigPath(), "secrets.yaml", kmsEncryptionContext)
 	assert.Nil(t, err)
 	assert.NotNil(t, conf)
 	assert.Equal(t, 1, len(conf.KeyGroups))

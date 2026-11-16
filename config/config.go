@@ -6,7 +6,6 @@ package config //import "github.com/getsops/sops/v3/config"
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -52,12 +51,17 @@ type ConfigFileResult struct {
 // LookupConfigFile looks for a sops config file in the current working directory
 // and on parent directories, up to the maxDepth limit.
 // It returns a result containing the file path and any warnings.
+//
+// The directory chain is walked with the filepath package, so the search works
+// the same for slash- and backslash-separated start paths, and the returned
+// path always uses forward slashes: it is handed back to callers that embed it
+// in messages and pass it on to config loading.
 func LookupConfigFile(start string) (ConfigFileResult, error) {
-	filepath := path.Dir(start)
+	dir := filepath.ToSlash(filepath.Dir(start))
 	var foundAlternatePath string
 
 	for i := 0; i < maxDepth; i++ {
-		configPath := path.Join(filepath, configFileName)
+		configPath := filepath.ToSlash(filepath.Join(dir, configFileName))
 		_, err := fs.Stat(configPath)
 		if err == nil {
 			result := ConfigFileResult{Path: configPath}
@@ -72,14 +76,19 @@ func LookupConfigFile(start string) (ConfigFileResult, error) {
 
 		// Check for alternate filename if we haven't found one yet
 		if foundAlternatePath == "" {
-			alternatePath := path.Join(filepath, alternateConfigName)
+			alternatePath := filepath.ToSlash(filepath.Join(dir, alternateConfigName))
 			_, altErr := fs.Stat(alternatePath)
 			if altErr == nil {
 				foundAlternatePath = alternatePath
 			}
 		}
 
-		filepath = path.Join(filepath, "..")
+		parent := filepath.ToSlash(filepath.Join(dir, ".."))
+		if parent == dir {
+			// Reached the filesystem root.
+			break
+		}
+		dir = parent
 	}
 
 	// No config file found
@@ -507,9 +516,100 @@ func configFromRule(rule *creationRule, kmsEncryptionContext map[string]*string)
 	}, nil
 }
 
+// normalizeRulePath converts a filesystem path into the form path_regex
+// patterns are written in: forward slashes, independent of the host. Patterns
+// in .sops.yaml always use "/", i.e. the path form seen on Linux, so a path
+// coming from a Windows caller is folded to that form before it is matched.
+// On Linux nothing changes, including file names that contain a literal
+// backslash, which is a valid character there.
+func normalizeRulePath(filePath string) string {
+	if filePath == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(filePath))
+}
+
+// slashPathOnly converts the path separators of filePath to forward slashes
+// without touching ".." or "." segments. Destination rules used to match the
+// caller's path verbatim, so only the separator form is normalized for them.
+func slashPathOnly(filePath string) string {
+	if filePath == "" {
+		return ""
+	}
+	return filepath.ToSlash(filePath)
+}
+
+// isRootedPath reports whether the normalized path p starts at a filesystem
+// root. filepath.IsAbs alone is not enough: on Windows "/foo" is rooted but not
+// absolute (it has no volume), while on Linux a backslash-led path is just a
+// file name and must stay relative.
+func isRootedPath(p string) bool {
+	return p != "" && (filepath.IsAbs(p) || os.IsPathSeparator(p[0]))
+}
+
+// rulePathForConfig returns filePath in the form in which the creation rules of
+// the config file located in configDir are matched against it: relative to
+// configDir and normalized to forward slashes. insideConfigDir reports whether
+// filePath is known to live inside configDir.
+//
+// A file outside of the config directory is never eligible for path_regex
+// matching: matching its absolute form can hit a pattern that was meant to be
+// relative to the config file (for example a sibling directory whose name also
+// appears in the pattern), which is how rules used to match files they were
+// never meant to cover. Only a rule without path_regex applies to such files.
+//
+// A path passed in relative form is matched as given, only normalized: its base
+// directory is unknown here, so it cannot be compared with configDir. The one
+// exception is a path that explicitly escapes upwards ("../..."), which is
+// outside by construction. The CLI resolves every input path with filepath.Abs
+// before loading the config, so command line usage always gets the strict check
+// on absolute paths.
+func rulePathForConfig(configDir, filePath string) (normalizedPath string, insideConfigDir bool) {
+	if filePath == "" {
+		return "", true
+	}
+
+	normalized := normalizeRulePath(filePath)
+	if !isRootedPath(normalized) {
+		if normalized == ".." || strings.HasPrefix(normalized, "../") {
+			return normalized, false
+		}
+		return normalized, true
+	}
+
+	// Resolve the path before comparing it with configDir. filepath.Abs fills in
+	// the volume on Windows for paths such as "/foo", so the comparison is
+	// native on every platform. The normalized form is passed in: a UNC path
+	// such as `\\server\share\file` is not considered absolute by the Windows
+	// filepath package in its backslash spelling, and would be resolved against
+	// the current volume instead of being kept as a UNC path.
+	absFilePath, err := filepath.Abs(normalized)
+	if err != nil {
+		return normalized, false
+	}
+
+	relPath, err := filepath.Rel(configDir, absFilePath)
+	if err != nil {
+		// On Windows this happens when both paths are on different volumes, so
+		// the file cannot be inside the config directory.
+		return normalizeRulePath(absFilePath), false
+	}
+
+	relPath = filepath.ToSlash(relPath)
+	if relPath == ".." || strings.HasPrefix(relPath, "../") {
+		return relPath, false
+	}
+	return relPath, true
+}
+
 func parseDestinationRuleForFile(conf *configFile, filePath string, kmsEncryptionContext map[string]*string) (*Config, error) {
 	var rule *creationRule
 	var dRule *destinationRule
+
+	// Destination rules match the path exactly as the caller provided it (publish
+	// passes the path as typed on the command line), so only the separator form
+	// is normalized here, not the relation to the config directory.
+	filePath = slashPathOnly(filePath)
 
 	if len(conf.DestinationRules) > 0 {
 		for _, r := range conf.DestinationRules {
@@ -578,8 +678,10 @@ func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEn
 		return nil, err
 	}
 
-	// compare file path relative to path of config file
-	filePath = strings.TrimPrefix(filePath, configDir+string(filepath.Separator))
+	// compare file path relative to path of config file, with path separators
+	// normalized so that rules written for Linux (forward slashes) keep working
+	// on Windows (backslashes).
+	filePath, insideConfigDir := rulePathForConfig(configDir, filePath)
 
 	var rule *creationRule
 
@@ -591,6 +693,13 @@ func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEn
 		reg, err := regexp.Compile(r.PathRegex)
 		if err != nil {
 			return nil, fmt.Errorf("can not compile regexp: %w", err)
+		}
+		// A path outside the config directory has no meaningful relative form,
+		// so path_regex rules must not be matched against it. The regexp is
+		// still compiled above so that an invalid pattern is reported for any
+		// file, and only a rule without path_regex can apply to such a file.
+		if !insideConfigDir {
+			continue
 		}
 		if reg.MatchString(filePath) {
 			rule = &r
